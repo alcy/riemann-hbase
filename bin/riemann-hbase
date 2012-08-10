@@ -1,0 +1,53 @@
+#!/usr/bin/env ruby
+
+require 'riemann/tools'
+require 'jmx4r'
+
+# Works under JRuby
+# Riemann Client to gather Hbase stats from JMX - currently can talk to localhost, without auth
+
+class Riemann::Tools::Hbase
+  include Riemann::Tools
+
+  opt :server_type, "Hbase Server Type", :default => "regionserver"
+  opt :jmx_port, "JMX Port to connect to", :default => "10101"
+
+  def alert(service, state, metric, description, tags)
+    report(
+      :service => service,
+      :state => state.to_s,
+      :metric => metric.to_f,
+      :description => description,
+      :tags => tags
+    )
+  end
+
+  def all_stats
+    
+    if opts[:server_type] == "master"
+      bean_object_name = "hadoop:service=Master,name=MasterStatistics"
+    else 
+      bean_object_name = "hadoop:service=RegionServer,name=RegionServerStatistics"
+    end
+
+    begin
+      JMX::MBean.establish_connection :host => "localhost", :port => "#{opts[:jmx_port]}"
+    rescue Exception => e
+      alert "hbase-#{opts[:server_type]}", :critical, "", "Could not connect to JMX, #{e.message}", ""
+      return
+    end
+
+    stats = JMX::MBean.find_by_name "#{bean_object_name}"
+    stats.attributes.keys.each { |attr|
+      alert "#{attr}", :ok, "#{stats.send attr}", "#{attr}", "hbase-#{opts[:server_type]}"
+    }
+
+  end
+
+  def tick
+    all_stats
+  end
+
+end
+  
+Riemann::Tools::Hbase.run
